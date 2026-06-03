@@ -12,6 +12,8 @@ The project has four conceptually separate pipeline stages:
 4. **Eval** — Benchmarking throughput, latency, and change detection accuracy
 
 ## Directory Structure
+
+```
 Mamba-RS-Engine/
 ├── model/          # PyTorch RS-Mamba model definition and training pipeline
 ├── data/           # Dataset loading and preprocessing (LEVIR-CD / OSCD)
@@ -29,6 +31,7 @@ Mamba-RS-Engine/
 ├── CLAUDE.md
 ├── README.md
 └── LICENSE
+```
 
 ## Dependencies
 - **Python**: see `requirements.txt` at repo root

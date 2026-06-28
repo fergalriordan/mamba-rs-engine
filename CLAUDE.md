@@ -17,7 +17,7 @@ The project has four conceptually separate pipeline stages:
 | 1. Literature Review | SSMs / Mamba, ViT limitations in RS, change-detection survey | **Complete** |
 | 2. Use Case & Dataset | Wildfire/flood use case; dataset = LEVIR-CD; access + loader format | **Complete** |
 | 3. PyTorch Implementation | Run/train RS-Mamba baseline on LEVIR-CD (also the throughput baseline) | **Complete** — pipeline validated; baseline 23.7 img/s (FP16) on T4 |
-| 4. TensorRT Export | ONNX/TensorRT export, FP16/INT8 calibration, accuracy retention | **Next** — de-risk `selective_scan` op export first |
+| 4. TensorRT Export | ONNX/TensorRT export, FP16/INT8 calibration, accuracy retention | **In progress** — PyTorch→ONNX **de-risked & working** (legacy exporter); ONNX→TensorRT next |
 | 5. C++ Inference Server | Standalone TensorRT server, benchmark >2× vs PyTorch | Planned |
 
 ## Directory Structure
@@ -73,21 +73,29 @@ Mamba-RS-Engine/
   prefer clarity over cleverness where performance allows
 
 ## Current Status
-**Phase 3 complete — PyTorch training pipeline validated end-to-end on Kaggle (Tesla T4); throughput
-baseline locked. Phase 4 (TensorRT export) is next.**
+**Phase 4 in progress — PyTorch→ONNX export de-risked and working. The `selective_scan` op
+crosses the export boundary cleanly; the open risk has shifted to ONNX→TensorRT.**
 
 - **Throughput baseline (LOCKED): PyTorch reference = 23.7 img/s** (best: FP16, batch 8, T4 @ 256).
   Phase 5 (TensorRT, FP16) must beat this by >2× → **~47 img/s** target. Full results, metrics, and
   the per-batch/precision table are in `docs/phase3_baseline.md`.
 - Model is `RSM_CD` tiny, 51.95M params. Working notebook: `notebooks/training_baseline.ipynb`.
 
-⚠️ **Phase 4 risk (SSM export) — scope this FIRST.** The model relies on the custom
-`selective_scan_cuda_oflex` CUDA op, which is **not** a standard ONNX/TensorRT operator. Exporting
-Mamba/SSM models is a known hard problem — expect to either provide a TensorRT plugin for the scan,
-decompose it into exportable ops, or use an ONNX custom-op path. This may dominate Phase 4's effort;
-de-risk the `selective_scan` export before pursuing FP16/INT8 calibration.
+✅ **Phase 4 SSM-export risk — RESOLVED for PyTorch→ONNX.** A naive `torch.onnx.export` via the
+**legacy TorchScript exporter** (`dynamo=False`) produces a valid, fully-standard-op, numerically
+correct ONNX (9126 nodes, zero custom ops; onnxruntime matches PyTorch to ~3e-3). The legacy
+exporter traces with *real* tensors so it runs the CUDA scan; the newer **dynamo/`torch.export`**
+path fails (FakeTensors can't enter the kernel) — but that's the only thing that fails, so no
+plugin/decompose/custom-op work is needed to reach ONNX. Full write-up:
+`docs/phase4_export.md`; investigation notebook: `notebooks/phase4_export_derisk.ipynb`.
 
-**Next step:** Phase 4 — begin by de-risking the `selective_scan` op export (above).
+⚠️ **Remaining Phase 4 risk — ONNX→TensorRT ingestion (untested).** onnxruntime-CPU running the
+graph does not guarantee TensorRT will: it leans on `Range`/`Mod`/`ScatterElements`/`Where`/`Resize`
++ dynamic shapes. Also: the legacy exporter is deprecated (works on torch 2.10), the dynamic batch
+axis is declared but not yet exercised, and fp16/INT8 numerics are untested.
+
+**Next step:** attempt the TensorRT build from `rsm_cd_v3_torchscript.onnx`
+(`trtexec --onnx=… --fp16` or the TRT Python API); see `docs/phase4_export.md` for the open risks.
 
 > **Working in `model/`, `data/`, or `export/`?** See `model/CLAUDE.md` for the Kaggle environment
 > recipe (kernel build + drift fixes), vendored RS-Mamba facts, the training-pipeline build, and

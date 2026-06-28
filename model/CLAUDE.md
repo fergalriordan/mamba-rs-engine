@@ -58,6 +58,29 @@ The original RS-Mamba change-detection code is vendored at `model/vendor/rs_mamb
   `model/vendor/rs_mamba_cd/train.py`) and `utils/data_loading.py`. Cropping/splitting helpers
   (`crop_img`, `split_image`, `compute_mean_std`) live in `utils/dataset_process.py`.
 
+## Export (Phase 4) — PyTorch → ONNX is de-risked and working
+Validated on the Phase-3 Kaggle T4 env (torch 2.10.0+cu128). Full write-up + open risks in
+`docs/phase4_export.md`; investigation notebook `notebooks/phase4_export_derisk.ipynb`.
+
+- **Extra deps** on top of the Phase-3 recipe: `pip install onnx onnxruntime onnxscript`.
+  ⚠️ `onnxscript` is required by the dynamo exporter — without it `torch.onnx.export(dynamo=True)`
+  dies at import before tracing. (`onnx`/`onnxruntime` for loading + verifying the graph.)
+- ✅ **Use the LEGACY TorchScript exporter:** `torch.onnx.export(net, (x1,x2), ..., dynamo=False)`
+  exports `RSM_CD(forward_type="v3")` to a **valid, fully-standard-op ONNX** (9126 nodes, **zero
+  custom ops**) that onnxruntime runs and that matches PyTorch to ~3e-3. It traces with *real*
+  tensors, so it actually runs the CUDA scan and records standard ops around it.
+- ❌ **The dynamo / `torch.export` path FAILS** (`dynamo=True`): FakeTensors can't enter the
+  compiled kernel → `RuntimeError: Cannot access data pointer of Tensor (FakeTensor)... wrap the
+  custom kernel into an opaque custom op`, at `rs_mamba_cd.py:201` (`selective_scan_cuda_oflex.fwd`).
+  The scan is the **sole** blocker — `CrossScan`/`CrossMerge` export fine (they appear as standard
+  `Gather`/`ScatterElements`/`Range`/`Mod`/`Where` ops). So **no plugin/decompose/custom-op work is
+  needed to reach ONNX.**
+- **Next session — de-risk ONNX → TensorRT** from `rsm_cd_v3_torchscript.onnx`
+  (`trtexec --onnx=... --fp16`, or the TRT Python API). Open risk: whether TRT ingests the graph's
+  `Range`/`Mod`/`ScatterElements`/`Where`/`Resize` + dynamic-shape ops. Also untested: dynamic batch
+  axis (verified at batch 1 only), fp16/INT8 numerics. Note the legacy exporter is **deprecated**
+  (default is dynamo in torch ≥2.9) but works on 2.10.
+
 ## Dataset
 **Selected: LEVIR-CD** — binary change detection, 637 image pairs, 1024×1024px.
 *(OSCD — multispectral Sentinel-2, 24 urban scenes — was considered as an alternative but not chosen.)*
